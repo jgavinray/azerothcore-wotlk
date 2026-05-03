@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/settings.schema.json",
+  "allowlists": {
+    "permissions": [
+      "read-all"
+    ],
+    "bash": [
+      ".*"
+    ]
+  },
+  "project": {
+    "name": "AzerothCore WotLK",
+    "description": "Open-source World of Warcraft WotLK (3.3.5a) game server emulator",
+    "language": "C++",
+    "build_system": "CMake",
+    "version": "12.0.0-dev.1"
+  },
+  "context": {
+    "project_type": "MMORPG Game Server",
+    "core_architecture": {
+      "main_loop": "Single-threaded World::Update() game loop",
+      "networking": "Multi-threaded Boost.Asio",
+      "database": "Async worker pools with MySQL",
+      "map_system": "Grid-based lazy loading (80x80 grids, 16x16 cells)",
+      "object_lookup": "GUID-based HashMapHolder with shared_mutex"
+    },
+    "key_directories": {
+      "src/server/apps": "Authserver and Worldserver executables",
+      "src/server/game": "Core game logic (entities, maps, spells, AI, quests)",
+      "src/server/database": "Database layer with async operations",
+      "src/server/shared": "Networking and shared utilities",
+      "src/common": "Threading infrastructure, queues, synchronization primitives",
+      "conf": "Configuration files and CMake templates",
+      "data": "DBC, maps, vmaps game data files"
+    },
+    "threading_infrastructure": {
+      "queues": ["LockedQueue", "ProducerConsumerQueue", "MPSCQueue (lock-free)"],
+      "sync_primitives": ["std::mutex", "std::shared_mutex", "std::condition_variable", "std::atomic"],
+      "existing_pools": ["MapUpdater (pathfinding)", "DatabaseWorker (async SQL)"]
+    },
+    "current_challenges": {
+      "testing": "Only 2 test files exist; testing foundation needed",
+      "warnings": "WITH_WARNINGS disabled by default",
+      "single_threaded": "Main game loop blocks on single thread"
+    }
+  },
+  "rules": {
+    "exclude_directories": [
+      "modules/**"
+    ],
+    "focus_areas": [
+      "src/server",
+      "src/common",
+      "conf",
+      "data"
+    ]
+  }
+}
