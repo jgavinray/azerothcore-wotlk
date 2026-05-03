@@ -1,0 +1,996 @@
+# AzerothCore Multi-Threaded Architecture Restructuring
+
+## Document Purpose
+
+This document captures the architectural analysis and incremental migration path for transforming AzerothCore from a single-threaded game loop to a multi-threaded architecture. It is designed to be used as a reference for breaking down work into manageable scopes that can be assigned to development teams or AI assistants.
+
+---
+
+## 1. Current Architecture Overview
+
+### 1.1 Core Design
+
+AzerothCore uses a **hybrid threading model**:
+
+| Component | Threading Model | Notes |
+|-----------|-----------------|-------|
+| World Game Loop | Single-threaded | All game logic updates run sequentially |
+| Network I/O | Multi-threaded | Boost.Asio with configurable pool |
+| Database | Async with worker pools | Configurable async/sync connection pools |
+| MapUpdater | Multi-threaded | Pathfinding and movement calculations |
+
+### 1.2 The Single-Threaded Constraint
+
+The main game loop (`World::Update()`) is single-threaded because:
+
+1. **Global Singletons** - Dozens of managers (sWorld, sObjectMgr, sScriptMgr, sMapMgr, etc.) are accessed without synchronization
+2. **Shared Data Structures** - Map grids, creature lists, player sessions, and object registries are not thread-safe
+3. **Creature AI** - AI state machines modify creature data without internal locking
+4. **Script System** - Lua/Embedded script interpreters are not thread-safe
+5. **Reference Iteration** - Iterating over players, creatures, and objects assumes no concurrent modification
+
+### 1.3 Existing Multi-Threaded Infrastructure
+
+The codebase already has proven threading patterns:
+
+| Subsystem | Location | Status |
+|-----------|----------|--------|
+| Database Worker Pool | src/server/database/ | Fully operational |
+| MapUpdater | src/server/game/Maps/ | Fully operational for pathfinding |
+| Network Threads | src/server/shared/Network/ | Fully operational |
+| MPSCQueue | src/common/Threading/ | Lock-free queue available |
+| TaskScheduler | src/common/Utilities/ | Async task support exists |
+
+---
+
+## 2. Incremental Migration Strategy
+
+### 2.1 Philosophy: "Islands of Concurrency"
+
+Rather than a complete rewrite, the approach is to:
+
+1. **Identify naturally isolated subsystems** that can run independently
+2. **Add thread-safety incrementally** to each subsystem
+3. **Expand existing islands** rather than creating new ones from scratch
+4. **Maintain backward compatibility** - single-threaded mode remains default
+
+### 2.2 Why Incremental Works
+
+- Maps are naturally partitioned (each map/instance is isolated)
+- Existing locking primitives (std::mutex, std::shared_mutex) are already used in some areas
+- MapUpdater proves the worker pool pattern works
+- Database async pool proves cross-thread communication works
+- No need to rewrite core logic - add threading around existing code
+
+---
+
+## 3. Critical Prerequisites: Code Quality Baseline
+
+### 3.1 Testing Infrastructure Gap
+
+**IMPORTANT:** Before any threading work begins, the testing infrastructure must be established. The current codebase has:
+
+| Metric | Value |
+|--------|-------|
+| Total test files | 2 |
+| Test files in src/test/ | 2 (Config.cpp, FormulasTest.cpp) |
+| Source files in src/server/game/ | ~920 |
+| Lines of game code | ~245,000+ |
+| Covered subsystems | Configuration, basic formulas |
+| Uncovered critical areas | Threading, maps, creatures, players, AI, networking, world state |
+
+**Why This Is a Showstopper:**
+
+Without tests, multi-threading work cannot be safely done because:
+1. **Race conditions cannot be detected** - No tests exercise concurrent access
+2. **Deadlocks cannot be found** - No stress testing infrastructure exists
+3. **Regression cannot be caught** - Threading changes may break existing behavior
+4. **No baseline for performance** - Cannot measure improvement without benchmarks
+
+**Recommendation:** Scope 0 (Testing Foundation) MUST be completed before Scopes 1-10.
+
+---
+
+### 3.2 Code Hygiene: Compilation Warnings
+
+**Current State:** The codebase is configured to **ignore compiler warnings**.
+
+| Setting | Current Value | Implication |
+|---------|---------------|-------------|
+| `WITH_WARNINGS` | OFF (default) | All warnings suppressed |
+| `TREAT_WARNINGS_AS_ERRORS` | Not configured | Warnings do not block builds |
+
+**Why This Is a Problem:**
+
+1. **Hidden bugs** - Warnings often indicate real issues (unused variables, type mismatches, potential null dereferences)
+2. **No quality gate** - New code with warnings can be merged without detection
+3. **Threading work will be buried in noise** - Any new warnings from threading changes will be invisible
+4. **Technical debt accumulation** - Warnings ignored today become bugs tomorrow
+
+**What Needs to Happen:**
+
+1. **Enable warnings** - Set `WITH_WARNINGS=ON` in CMake configuration
+2. **Treat warnings as errors** - Add `-Werror` flag for CI builds
+3. **Fix existing warnings** - Clean the codebase before adding new complexity
+4. **CI enforcement** - Fail builds on new warnings
+
+**Recommended CMake Configuration:**
+```cmake
+option(WITH_WARNINGS       "Show all warnings during compile" ON)
+option(TREAT_WARNINGS_AS_ERRORS "Treat warnings as errors in CI" ON)
+```
+
+**Warning Categories to Address:**
+- Unused variables and parameters
+- Implicit type conversions
+- Missing return statements
+- Unused function parameters (common in virtual overrides)
+- Deprecated API usage
+- Potential null pointer dereferences
+- Sign comparison warnings
+
+**Risk Level:** High - Without clean compilation, threading bugs will be hidden in warning noise.
+
+**Timeline:** 2-4 weeks to clean existing warnings and establish enforcement.
+
+---
+
+### 3.3 Development Environment: Running Instance Requirement
+
+**Critical Observation:** Any multi-threading work requires a **fully functional, running game server instance** for testing.
+
+**Current Challenges:**
+
+1. **No documented setup for local development** - Installing and configuring AzerothCore requires:
+   - Database setup (MySQL/MariaDB)
+   - Game data files (DBC, maps, vmaps, mmaps extracted from WoW client)
+   - Configuration files properly wired
+   - Realm configuration for authentication
+
+2. **Testing requires end-to-end validation:**
+   - Unit tests cannot verify actual gameplay
+   - Threading bugs may only manifest under real player load
+   - Network interactions require actual client connections
+
+3. **Playerbot module adds complexity:**
+   - Your branch includes Playerbot integration
+   - Requires additional configuration and testing
+   - Bots must be able to join and interact in the world
+
+**What Needs to Happen:**
+
+1. **Documented local dev setup** - Step-by-step guide to:
+   - Build and run authserver and worldserver
+   - Create a playable character
+   - Connect with a WoW client
+   - Verify basic gameplay works
+
+2. **Docker-based dev environment** (recommended):
+   - `docker-compose.yml` already exists in the repo
+   - Can be used for quick setup of database and servers
+   - Reduces setup time from days to hours
+
+3. **Baseline functionality verification:**
+   - Player can log in
+   - Player can move in the world
+   - Basic combat works
+   - Playerbot functionality (if applicable)
+
+**Risk Level:** Critical - Without a working instance, no testing is possible.
+
+**Timeline:** 1-2 weeks to establish reliable dev environment.
+
+---
+
+## 4. Scope Definitions for Incremental Work
+
+### Scope -1: Code Hygiene Foundation (BEFORE ALL OTHER SCOPES)
+
+**Objective:** Establish code quality baseline by enabling and fixing compiler warnings.
+
+**Work Items:**
+- Enable `WITH_WARNINGS=ON` in CMake configuration
+- Add `-Werror` flag for CI builds (treat warnings as errors)
+- Audit and fix existing warnings across the codebase:
+  - Unused variables and parameters
+  - Implicit type conversions
+  - Missing return statements
+  - Unused function parameters (common in virtual overrides)
+  - Deprecated API usage
+  - Potential null pointer dereferences
+  - Sign comparison warnings
+- Establish CI enforcement: fail builds on new warnings
+- Document warning suppression exceptions (if any are truly necessary)
+
+**Deliverables:**
+- Clean build with all warnings enabled
+- CI pipeline that fails on new warnings
+- Documented list of any intentional warning suppressions
+- Baseline: zero warnings in clean build
+
+**Success Criteria:**
+- Code compiles with `-Wall -Wextra -Werror` (GCC/Clang) or equivalent
+- No new warnings introduced in PRs
+- Existing warning debt addressed or documented
+
+**Risk Level:** Critical - Without clean compilation, threading bugs will be hidden in warning noise.
+
+**Timeline:** 2-4 weeks to clean existing warnings and establish enforcement.
+
+---
+
+### Scope 0: Testing Foundation (CRITICAL PREREQUISITE)
+
+**Objective:** Establish comprehensive testing infrastructure before any threading work begins.
+
+**Work Items:**
+- Set up Google Test framework with CI integration (partially exists, needs expansion)
+- Create test infrastructure for core subsystems:
+  - ObjectAccessor (thread-safe lookups)
+  - Map system (grid updates, object management)
+  - WorldSession handling
+  - Creature AI (state machines, combat)
+  - Script system callbacks
+  - Database async operations
+- Add thread-safety testing utilities:
+  - ThreadSanitizer (TSan) integration in CI
+  - Helgrind/Valgrind scripts for memory/thread analysis
+  - Stress test frameworks that run tests thousands of times with varying thread counts
+- Create mock objects for complex dependencies:
+  - World mock (already exists)
+  - Player mocks
+  - Creature mocks
+  - Map mocks
+- Establish code coverage targets (aim for 70%+ on critical paths)
+
+**Deliverables:**
+- CI pipeline that runs unit tests on every PR
+- ThreadSanitizer integration in CI
+- Stress test suite for concurrent access patterns
+- Mock framework for game objects
+- Code coverage reports for critical subsystems
+- Baseline performance benchmarks
+
+**Success Criteria:**
+- All existing tests pass
+- New tests cover critical threading paths
+- ThreadSanitizer runs without false positives on clean code
+- Stress tests complete without deadlocks or crashes
+- Code coverage >50% on core threading paths
+
+**Risk Level:** High - Without this, all subsequent scopes are untestable and risky
+
+**Timeline:** 8-16 weeks for foundational testing
+
+---
+
+### Scope 1: Foundation Audit and Planning
+
+**Objective:** Document all shared state and identify synchronization requirements.
+
+**Work Items:**
+- Inventory all global singletons and their access patterns
+- Identify all shared data structures accessed during game loop
+- Map cross-dependencies between subsystems
+- Identify potential deadlock scenarios
+- Document thread-safety annotations for existing code
+
+**Deliverables:**
+- Shared state registry with access patterns
+- Dependency graph showing coupling between components
+- Risk assessment for each subsystem
+
+**Success Criteria:**
+- Complete understanding of what needs protection
+- Clear identification of read-heavy vs write-heavy data
+- Documented synchronization requirements
+
+---
+
+### Scope 2: Object Access Layer Thread-Safety
+
+**Objective:** Make global object lookups thread-safe.
+
+**Background:** ObjectAccessor already uses std::shared_mutex for player lookups. This scope extends that pattern.
+
+**Work Items:**
+- Audit all ObjectAccessor methods for thread-safety gaps
+- Extend shared_mutex pattern to creature and gameobject lookups
+- Add thread-safety wrappers for HashMapHolder classes
+- Ensure all find/get methods use proper locking
+
+**Deliverables:**
+- Thread-safe ObjectAccessor implementation
+- Unit tests verifying concurrent access safety
+- Documentation on correct usage patterns
+
+**Success Criteria:**
+- Multiple threads can safely look up objects concurrently
+- Read operations use shared locks (allow concurrent reads)
+- Write operations use exclusive locks (prevent races)
+
+**Risk Level:** Low - infrastructure already exists
+
+---
+
+### Scope 3: Map-Level Threading
+
+**Objective:** Allow individual maps to update on separate threads.
+
+**Background:** Maps are naturally isolated. Instances are completely independent; world maps can be partitioned by zone.
+
+**Work Items:**
+- Extend MapUpdater to handle full map updates (not just pathfinding)
+- Implement per-map locking strategy
+- Handle cross-map interactions (transports, phased content)
+- Create worker pool for map update distribution
+
+**Deliverables:**
+- MapUpdateManager that distributes maps across worker threads
+- Per-map synchronization primitives
+- Cross-map communication mechanism (message queues)
+- Configuration options for thread count and strategy
+
+**Success Criteria:**
+- Multiple maps can update concurrently
+- Cross-map interactions remain consistent
+- No deadlocks or race conditions
+
+**Risk Level:** Medium - requires careful handling of cross-map dependencies
+
+---
+
+### Scope 4: Creature AI Threading
+
+**Objective:** Allow creature AI updates to run on worker threads.
+
+**Background:** Each creature's AI state is mostly isolated. AI updates can be batched and distributed.
+
+**Work Items:**
+- Design work queue for creature AI updates
+- Implement per-creature or per-grid locking
+- Handle AI state that crosses boundaries (combat, grouping)
+- Integrate with existing MapUpdater infrastructure
+
+**Deliverables:**
+- CreatureAIWorker pool
+- Thread-safe AI state management
+- Graceful handling of AI operations that require world access
+
+**Success Criteria:**
+- Creature AI can run on multiple threads
+- Combat and threat management remain consistent
+- No AI state corruption under concurrent access
+
+**Risk Level:** Medium-High - AI has many side effects
+
+---
+
+### Scope 5: Script System Isolation
+
+**Objective:** Make script execution safe in a multi-threaded environment.
+
+**Background:** Script interpreters (Lua, embedded C++) are not thread-safe. This requires isolation.
+
+**Work Items:**
+- Design script execution isolation strategy
+- Options: per-thread interpreters, message-passing to dedicated thread, or script batching
+- Ensure script callbacks from game logic are properly queued
+- Handle script-induced world modifications safely
+
+**Deliverables:**
+- Script execution model for multi-threaded environment
+- Queue mechanism for script callbacks
+- Documentation on script threading guarantees
+
+**Success Criteria:**
+- Scripts can execute without corruption
+- Script-induced state changes are consistent
+- No crashes from concurrent script access
+
+**Risk Level:** High - script systems are complex and varied
+
+---
+
+### Scope 6: Grid/Cell Update Threading
+
+**Objective:** Parallelize grid cell updates within maps.
+
+**Background:** Maps use a grid system (64x64 cells). Nearby cells can be updated in parallel.
+
+**Work Items:**
+- Design per-cell or per-grid locking strategy
+- Implement work distribution for cell updates
+- Handle visibility updates across cell boundaries
+- Ensure object movement between cells is safe
+
+**Deliverables:**
+- GridUpdateManager for parallel cell updates
+- Cell-level synchronization primitives
+- Cross-cell communication for visibility updates
+
+**Success Criteria:**
+- Multiple cells can update concurrently
+- Object movement between cells is safe
+- No visibility or update glitches
+
+**Risk Level:** Medium - complex but localized
+
+---
+
+### Scope 7: World State Threading
+
+**Objective: Make global world state updates thread-safe.**
+
+**Background:** World class manages sessions, timers, queues, and global game state.
+
+**Work Items:**
+- Thread-safe session management
+- Parallel session updates
+- Thread-safe CLI command processing
+- Safe handling of world timers and intervals
+
+**Deliverables:**
+- Thread-safe World class implementation
+- Session update worker pool
+- Safe CLI command queuing
+
+**Success Criteria:**
+- Player sessions can update concurrently
+- World state remains consistent
+- No session corruption or data races
+
+**Risk Level:** Medium-High - many players accessing shared state
+
+---
+
+### Scope 8: Configuration System Extensions
+
+**Objective:** Add configuration options for threading control.
+
+**Work Items:**
+- Add thread count configuration for each subsystem
+- Add strategy selection (round-robin, work-stealing, affinity)
+- Add lock granularity configuration
+- Add CPU affinity options for worker pools
+
+**Configuration Options to Add:**
+- WorldUpdate.Threads
+- WorldUpdate.Strategy
+- CreatureAI.Threads
+- GridUpdate.Threads
+- Synchronization.LockGranularity
+- Performance.WorkerPoolSize
+
+**Deliverables:**
+- Updated configuration files (.conf.dist)
+- Configuration access code
+- Documentation on configuration options
+
+**Success Criteria:**
+- All threading behavior is configurable
+- Default values maintain backward compatibility
+- Clear documentation for administrators
+
+**Risk Level:** Low - configuration system already exists
+
+---
+
+### Scope 9: Testing and Validation Framework
+
+**Objective:** Create comprehensive testing for multi-threaded behavior.
+
+**Work Items:**
+- Design stress tests for concurrent access
+- Create race condition detection tests
+- Implement deadlock detection mechanisms
+- Create performance benchmarking suite
+
+**Deliverables:**
+- Thread-safety test suite
+- Stress testing infrastructure
+- Race condition detection tools
+- Performance comparison benchmarks
+
+**Success Criteria:**
+- All threading changes have corresponding tests
+- No deadlocks detected under stress
+- Performance improvements verified
+
+**Risk Level:** Medium - critical for quality assurance
+
+---
+
+### Scope 10: Performance Optimization
+
+**Objective:** Optimize the multi-threaded implementation for performance.
+
+**Work Items:**
+- Profile multi-threaded implementation
+- Identify and eliminate contention points
+- Optimize lock granularity
+- Tune thread pool sizes
+
+**Deliverables:**
+- Performance profiling reports
+- Optimization recommendations
+- Tuned configuration defaults
+
+**Success Criteria:**
+- Measurable performance improvement
+- Efficient CPU utilization
+- Minimal lock contention
+
+**Risk Level:** Low - optimization after core functionality
+
+---
+
+## 4. Incremental Delivery Roadmap
+
+### Phase 0: Testing Foundation (MUST BE FIRST)
+**Scope 0 Only** - Do not proceed until this is complete.
+- Establish Google Test framework with CI integration
+- Create test infrastructure for core subsystems
+- Add ThreadSanitizer and stress testing tools
+- Build mock framework for game objects
+- Establish baseline performance benchmarks
+
+**Timeline:** 8-16 weeks
+
+**Gate:** Do not proceed to Phase 1 until:
+- ThreadSanitizer runs in CI
+- Stress tests pass without deadlocks
+- Code coverage >50% on critical paths
+
+---
+
+### Phase 1: Foundation (Scopes 1, 2, 8, 9)
+- Audit shared state
+- Make object access thread-safe
+- Add configuration infrastructure
+- Expand testing framework
+
+**Timeline:** 8-12 weeks
+
+### Phase 2: Isolated Subsystems (Scope 3, 6)
+- Map-level threading
+- Grid/cell update threading
+
+**Timeline:** 12-16 weeks
+
+### Phase 3: Core Game Logic (Scope 4, 5, 7)
+- Creature AI threading
+- Script system isolation
+- World state threading
+
+**Timeline:** 16-24 weeks
+
+### Phase 4: Optimization (Scope 10)
+- Performance tuning
+- Contention elimination
+
+**Timeline:** 4-8 weeks
+
+---
+
+## 5. Configuration Reference
+
+### Existing Thread Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| ThreadPool | 2 | Global thread pool |
+| MapUpdate.Threads | 1 | Map update workers |
+| Network.Threads | 1 | Network I/O threads |
+| Database.WorkerThreads | 1 | Async database workers |
+| UseProcessors | 0 | CPU affinity bitmask |
+
+### New Configuration Options to Add
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| WorldUpdate.Threads | 1 | Game world update workers |
+| WorldUpdate.Strategy | 0 | Distribution strategy |
+| CreatureAI.Threads | 0 | Creature AI workers |
+| GridUpdate.Threads | 0 | Grid update workers |
+| Synchronization.LockGranularity | 0 | Lock granularity level |
+
+---
+
+## 6. Risk Assessment
+
+| Scope | Risk Level | Primary Concerns |
+|-------|------------|------------------|
+| **Scope 0: Testing Foundation** | **Critical** | Without tests, all other scopes are untestable and high-risk |
+| Object Access | Low | Existing infrastructure, incremental change |
+| Map-Level | Medium | Cross-map dependencies, transport handling |
+| Creature AI | Medium-High | AI state complexity, side effects |
+| Script System | High | Interpreter thread-safety, callback complexity |
+| Grid Updates | Medium | Cell boundary handling, visibility |
+| World State | Medium-High | Session complexity, global state |
+| Configuration | Low | Existing system, additive change |
+| Testing (additional) | Medium | Comprehensive coverage required |
+| Optimization | Low | Post-functionality improvement |
+
+---
+
+## 7. Key Architectural Decisions to Document
+
+1. **Lock Granularity Strategy** - Coarse vs medium vs fine locking
+2. **Work Distribution Strategy** - Round-robin vs work-stealing vs affinity
+3. **Script Isolation Approach** - Per-thread interpreters vs message queue vs batching
+4. **Cross-Subsystem Communication** - Message queues vs shared state with locks
+5. **Backward Compatibility** - Single-threaded mode as default/fallback
+
+---
+
+## 8. Files Requiring Attention
+
+### Core Threading
+- src/server/apps/worldserver/Main.cpp - Main game loop
+- src/server/game/World/World.cpp - World update logic
+- src/server/game/Maps/Map.cpp - Map update logic
+- src/server/game/Maps/MapUpdater.h/cpp - Existing threading infrastructure
+
+### Shared State
+- src/server/game/Globals/ObjectAccessor.h/cpp - Object lookup
+- src/server/game/World/World.h - World state
+- src/server/game/Scripting/ScriptMgr.h - Script system
+
+### Threading Infrastructure
+- src/common/Threading/PCQueue.h - Producer-consumer queue
+- src/common/Threading/MPSCQueue.h - Lock-free queue
+- src/common/Threading/Threading.h - Thread abstraction
+
+### Configuration
+- src/server/apps/worldserver/worldserver.conf.dist - Configuration file
+- src/common/Configuration/Config.h/cpp - Config manager
+
+---
+
+## 9. Success Metrics
+
+1. **Functional** - All game features work correctly in multi-threaded mode
+2. **Performance** - Measurable improvement in player capacity and tick rate
+3. **Stability** - No deadlocks, data races, or corruption under load
+4. **Configurability** - All threading behavior is tunable via configuration
+5. **Backward Compatibility** - Single-threaded mode remains functional
+
+---
+
+## 10. Notes for Future Planning
+
+- Each scope should be broken into smaller tasks before assignment
+- Testing must accompany each scope - no threading change without tests
+- Configuration changes should be additive - never break existing defaults
+- Documentation should be updated with each scope completion
+- Performance benchmarks should be run at each phase completion
+
+---
+
+---
+
+## 11. Design Pattern References
+
+This section provides references and explanations for the design patterns mentioned throughout this document. Teams unfamiliar with these patterns should review them before beginning work.
+
+### 11.1 Islands of Concurrency Pattern
+
+**Concept:** Instead of making the entire application multi-threaded at once, identify naturally isolated subsystems ("islands") that can run concurrently without interfering with each other. Each island manages its own threading internally while presenting a simplified interface to the rest of the system.
+
+**Key Characteristics:**
+- Each island has a single entry point for work submission
+- Islands do not share mutable state directly; they communicate via message queues or well-defined interfaces
+- Islands can be developed, tested, and deployed independently
+- The system can run with islands in single-threaded mode for backward compatibility
+
+**Why This Applies Here:** Maps, instances, and battlegrounds are naturally isolated. Each map's state is mostly independent, making them ideal candidates for separate thread pools.
+
+**References:**
+- "Islands of Concurrency" - Various industry implementations (e.g., Unity's ECS, Unreal's Game Thread)
+- Martin, R. C. (2009). *Clean Architecture*. Chapter on concurrency boundaries.
+- Real-world examples:
+  - [Unity DOTS/ECS Architecture](https://docs.unity3d.com/Packages/com.unity.entities@latest)
+  - [Unreal Engine Game Thread and Render Thread](https://docs.unrealengine.com/)
+
+---
+
+### 11.2 Worker Pool Pattern
+
+**Concept:** A fixed pool of worker threads pulls work from a shared queue and processes it. The main thread submits work to the queue and does not wait for completion (fire-and-forget) or waits via future/promise.
+
+**Key Characteristics:**
+- Fixed number of worker threads (configurable)
+- Work items are queued and distributed among workers
+- Workers run independently and continuously
+- Clean shutdown via cancellation tokens or poison pills
+
+**Existing Implementation in Codebase:**
+- `src/server/database/Database/DatabaseWorkerPool.h` - Database worker pool
+- `src/server/game/Maps/MapUpdater.h` - Map update worker pool
+
+**References:**
+- Goetz, B. et al. (2006). *Java Concurrency in Practice*. [Chapter 8: Threads](https://javaconcurrencyinpractice.com/)
+- C++11 `std::thread` pool implementations:
+  - [cppreference - std::thread](https://en.cppreference.com/w/cpp/thread/thread)
+  - [CppCon Talk: Thread Pools](https://www.youtube.com/results?search_query=cppcon+thread+pool)
+- [Boost.Asio Documentation](https://www.boost.org/doc/libs/release/doc/html/boost_asio.html)
+
+---
+
+### 11.3 Producer-Consumer Queue
+
+**Concept:** A thread-safe queue where producer threads add work items and consumer threads remove and process them. Decouples work submission from work execution.
+
+**Key Characteristics:**
+- Thread-safe insertion and removal
+- Blocking operations when queue is empty (for consumers)
+- Bounded or unbounded capacity
+- Optional priority ordering
+
+**Existing Implementation in Codebase:**
+- `src/common/Threading/PCQueue.h` - Mutex-based producer-consumer queue
+- `src/common/Threading/MPSCQueue.h` - Lock-free MPSC (Multi-Producer Single-Consumer) queue
+
+**References:**
+- Goetz, B. et al. (2006). *Java Concurrency in Practice*. [Chapter 8: Threads](https://javaconcurrencyinpractice.com/)
+- Dmitry Vyukov's MPSC queue:
+  - [1024cores: MPSC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues)
+  - [1024cores: Unbounded MPSC](http://www.1024cores.net/home/lock-free-algorithms/queues/unbounded_mpsc)
+
+---
+
+### 11.4 Lock-Free Queue (MPSC)
+
+**Concept:** A queue implementation that uses atomic operations instead of locks, allowing multiple producers to add items concurrently while a single consumer removes them without blocking.
+
+**Key Characteristics:**
+- No mutexes or locks required
+- Uses atomic operations with memory ordering
+- Higher throughput for high-contention scenarios
+- Typically single-consumer only (for multi-consumer, use MPMC variants)
+
+**Existing Implementation in Codebase:**
+- `src/common/Threading/MPSCQueue.h` - Dmitry Vyukov's lock-free MPSC queue
+
+**References:**
+- Vyukov, D. "Bounded and Unbounded MPSC Queue." [http://www.1024cores.net/home/lock-free-algorithms/queues](http://www.1024cores.net/home/lock-free-algorithms/queues)
+- Herrihy & Shavit, *The Art of Multiprocessor Programming*. [O'Reilly](https://www.oreilly.com/library/view/the-art-of/9780123973375/)
+- [C++ Atomics Documentation](https://en.cppreference.com/w/cpp/atomic/atomic)
+
+---
+
+### 11.5 Reader-Writer Lock (std::shared_mutex)
+
+**Concept:** A synchronization primitive that allows multiple concurrent readers or a single writer. Optimized for read-heavy workloads.
+
+**Key Characteristics:**
+- Multiple threads can hold shared (read) locks simultaneously
+- Exclusive (write) lock is mutually exclusive with all other locks
+- Writers may starve readers or vice-versa depending on implementation
+
+**Existing Implementation in Codebase:**
+- `src/server/game/Globals/ObjectAccessor.h` - Uses std::shared_mutex for player lookups
+- `src/server/game/Maps/Map.h` - MMapLock uses std::shared_mutex
+
+**References:**
+- C++17 `std::shared_mutex` and `std::shared_lock` documentation:
+  - [cppreference - std::shared_mutex](https://en.cppreference.com/w/cpp/thread/shared_mutex)
+  - [cppreference - std::shared_lock](https://en.cppreference.com/w/cpp/thread/shared_lock)
+- Goetz, B. et al. (2006). *Java Concurrency in Practice*. [Chapter 4: Objects](https://javaconcurrencyinpractice.com/)
+
+---
+
+### 11.6 Work Stealing
+
+**Concept:** Each worker thread has its own work queue. When a thread's queue is empty, it "steals" work from another thread's queue. Balances load dynamically.
+
+**Key Characteristics:**
+- Reduces contention compared to a single shared queue
+- Improves cache locality (threads work on their own queues)
+- More complex to implement correctly
+- Used in Intel TBB, Java Fork-Join framework
+
+**References:**
+- Leiserson, C. E. (2009). "Work-Stealing Thread Pools." [MIT CSAIL Paper](https://people.csail.mit.edu/cel/papers/popl09.pdf)
+- Intel Threading Building Blocks (TBB): [Official Documentation](https://intel.github.io/oneapi-tbb/)
+- Cilk Plus Work Stealing: [Cilk Documentation](https://cilk.github.io/)
+- [CppCon Talk: Work Stealing](https://www.youtube.com/results?search_query=cppcon+work+stealing)
+
+---
+
+### 11.7 Round-Robin Work Distribution
+
+**Concept:** Work items are distributed to worker threads in a cyclic order. Simple and predictable load balancing.
+
+**Key Characteristics:**
+- Each thread gets approximately equal work
+- Easy to implement with atomic counter
+- May not adapt to varying work item complexity
+
+**References:**
+- Round-Robin scheduling: [Wikipedia](https://en.wikipedia.org/wiki/Round-robin_scheduling)
+- [Thread Pool Patterns](https://en.wikipedia.org/wiki/Thread_pool)
+
+---
+
+### 11.8 CPU Affinity
+
+**Concept:** Binding specific threads to specific CPU cores. Can improve performance by reducing context switching and improving cache utilization.
+
+**Key Characteristics:**
+- Threads run only on designated cores
+- Can reduce cache misses for CPU-intensive workloads
+- Requires OS-level support
+
+**Existing Implementation in Codebase:**
+- `UseProcessors` configuration option in worldserver.conf.dist and authserver.conf.dist
+
+**References:**
+- Linux `pthread_setaffinity_np()`: [man7.org](https://man7.org/linux/man-pages/man3/pthread_setaffinity_np.3.html)
+- Windows `SetThreadAffinityMask()`: [Microsoft Docs](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadaffinitymask)
+- CPU Affinity overview: [Wikipedia](https://en.wikipedia.org/wiki/Processor_affinity)
+
+---
+
+### 11.9 Lock Granularity
+
+**Concept:** The scope of data protected by a single lock. Coarse locking (large scope, fewer locks) is simpler but reduces concurrency. Fine locking (small scope, more locks) increases concurrency but adds complexity and deadlock risk.
+
+**Levels:**
+- **Coarse:** Single global lock for entire subsystem
+- **Medium:** Per-component locks (e.g., one per map)
+- **Fine:** Per-element locks (e.g., one per grid cell)
+
+**Trade-offs:**
+- Coarse: Simpler, less concurrent, lower overhead
+- Fine: More concurrent, more complex, higher overhead, more deadlock risk
+
+**References:**
+- Goetz, B. et al. (2006). *Java Concurrency in Practice*. [Chapter 10: Lock Granularity](https://javaconcurrencyinpractice.com/)
+- [Lock Striping Pattern](https://en.wikipedia.org/wiki/Striped_lock)
+
+---
+
+### 11.10 Message Queue for Cross-Subsystem Communication
+
+**Concept:** Subsystems communicate by sending messages through queues rather than direct function calls. Decouples components and enables asynchronous processing.
+
+**Key Characteristics:**
+- Sender does not wait for receiver to process
+- Messages are queued and processed in order
+- Can be used for cross-thread or cross-process communication
+
+**References:**
+- Enterprise Integration Patterns (Hohpe & Woolf): [Message Queue Pattern](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageQueue.html)
+- [Enterprise Integration Patterns Book](https://www.enterpriseintegrationpatterns.com/)
+- Actor model: [Akka Documentation](https://akka.io/), [Erlang/OTP Documentation](https://www.erlang.org/doc/)
+
+---
+
+### 11.11 Script Isolation Patterns
+
+For making non-thread-safe script interpreters safe in multi-threaded environments:
+
+**Option A: Per-Thread Interpreters**
+- Each worker thread has its own script interpreter instance
+- Scripts run in the context of the worker thread
+- Requires more memory but provides full isolation
+
+**Option B: Dedicated Script Thread**
+- Single thread owns the script interpreter
+- All script requests are queued and processed sequentially
+- Simpler but creates a bottleneck
+
+**Option C: Script Batching**
+- Collect script callbacks during the update cycle
+- Execute them all on the main thread after other updates complete
+- Maintains single-threaded script execution
+
+**References:**
+- Lua documentation on thread safety and multi-state usage:
+  - [Lua 5.1 Manual - Coroutines](https://www.lua.org/manual/5.1/manual.html#2.11)
+  - [Lua-Fiber: Coroutines for Multi-threading](https://github.com/stevedonovan/lua-fiber)
+- Embedding script interpreters in multi-threaded applications:
+  - [Lua State Management](https://www.lua.org/pil/29.html)
+  - [Boost.Python GIL Handling](https://www.boost.org/doc/libs/release/libs/python/doc/html/python/threading.html)
+
+---
+
+### 11.12 Deadlock Detection and Prevention
+
+**Concept:** Strategies for avoiding or detecting circular lock dependencies.
+
+**Prevention Strategies:**
+- Lock ordering: Always acquire locks in a consistent global order
+- Lock timeouts: Attempt to acquire with timeout, back off on failure
+- Lock hierarchy: Define levels, only acquire locks at higher levels
+
+**Detection Strategies:**
+- Wait-for graph analysis
+- Timeout-based detection (if waiting too long, likely deadlocked)
+
+**Existing Implementation in Codebase:**
+- `src/server/database/Database/Transaction.cpp` - Deadlock retry logic with shared mutex
+
+**References:**
+- Goetz, B. et al. (2006). *Java Concurrency in Practice*. [Chapter 11: Deadlock](https://javaconcurrencyinpractice.com/)
+- [Wikipedia: Deadlock](https://en.wikipedia.org/wiki/Deadlock)
+- [C++ std::lock and std::lock_guard](https://en.cppreference.com/w/cpp/thread/lock)
+- [Boost.Lockfree Documentation](https://www.boost.org/doc/libs/release/libs/lockfree/)
+
+---
+
+### 11.13 Stress Testing for Concurrency
+
+**Concept:** Deliberately exercising code under high concurrent load to expose race conditions, deadlocks, and other threading bugs.
+
+**Techniques:**
+- Run tests many thousands of times with varying thread counts
+- Introduce artificial delays to expose timing-dependent bugs
+- Use thread sanitizers (TSan, Helgrind)
+- Randomize operation ordering
+
+
+**References:**
+- Google Test framework: [Official Documentation](https://google.github.io/googletest/)
+- ThreadSanitizer (TSan): [Compiler-RT TSan](https://clang.llvm.org/docs/ThreadSanitizer.html)
+- Helgrind (Valgrind): [Valgrind Helgrind Documentation](https://valgrind.org/docs/manual/hg-manual.html)
+- [CppCon Talk: Data Race Detection](https://www.youtube.com/results?search_query=cppcon+data+race+detection)
+- Google's ThreadSanitizer integration: [TSan Wiki](https://github.com/google/sanitizers/wiki/ThreadSanitizerSupportedLibraries)
+
+---
+
+## 12. Glossary
+
+| Term | Definition | References |
+|------|------------|------------|
+| **Atomic Operation** | An operation that completes indivisibly, visible to other threads as instantaneous | [cppreference - std::atomic](https://en.cppreference.com/w/cpp/atomic/atomic) |
+| **Race Condition** | When program behavior depends on the relative timing of concurrent operations | [Wikipedia: Race Condition](https://en.wikipedia.org/wiki/Race_condition) |
+| **Deadlock** | When two or more threads are waiting for each other indefinitely | [Wikipedia: Deadlock](https://en.wikipedia.org/wiki/Deadlock) |
+| **Lock Contention** | When threads spend time waiting for locks rather than doing work | [Oracle: Lock Contention](https://docs.oracle.com/javase/tutorial/essential/concurrency/sync.html) |
+| **Thread-Safe** | Code that can be safely executed by multiple threads concurrently | [cppreference - Thread Safety](https://en.cppreference.com/w/c/thread) |
+| **Context Switch** | When the OS switches a core from executing one thread to another | [Wikipedia: Context Switch](https://en.wikipedia.org/wiki/Context_switch) |
+| **Cache Coherency** | Ensuring all CPU cores see a consistent view of memory | [Wikipedia: Cache Coherence](https://en.wikipedia.org/wiki/Cache_coherence) |
+| **Memory Ordering** | The ordering guarantees for atomic operations (acquire, release, relaxed) | [cppreference - Memory Order](https://en.cppreference.com/w/cpp/atomic/memory_order) |
+| **Mutex** | Mutual exclusion primitive allowing only one thread to hold the lock | [cppreference - std::mutex](https://en.cppreference.com/w/cpp/thread/mutex) |
+| **Condition Variable** | Synchronization primitive for waiting on conditions | [cppreference - std::condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable) |
+| **Future/Promise** | Mechanism for asynchronous result retrieval | [cppreference - std::future](https://en.cppreference.com/w/cpp/thread/future) |
+| **Worker Thread** | Background thread that processes work from a queue | [Wikipedia: Thread Pool](https://en.wikipedia.org/wiki/Thread_pool) |
+
+---
+
+---
+
+## 13. Additional Resource Links
+
+### Comprehensive Concurrency Resources
+
+| Resource | Type | URL |
+|----------|------|-----|
+| **Java Concurrency in Practice** | Book (concepts apply to all languages) | [javaconcurrencyinpractice.com](https://javaconcurrencyinpractice.com/) |
+| **1024cores** | Blog on lock-free algorithms | [www.1024cores.net](http://www.1024cores.net/) |
+| **C++ Reference (Concurrency)** | Documentation | [en.cppreference.com/w/cpp/thread](https://en.cppreference.com/w/cpp/thread) |
+| **Boost.Asio Documentation** | Library documentation | [boost.org/doc/libs/release/doc/html/boost_asio.html](https://www.boost.org/doc/libs/release/doc/html/boost_asio.html) |
+| **The Art of Multiprocessor Programming** | Book | [O'Reilly](https://www.oreilly.com/library/view/the-art-of/9780123973375/) |
+
+### Video Resources
+
+| Title | Topic | Link |
+|-------|-------|------|
+| **CppCon Talks on Concurrency** | Various threading topics | [YouTube CppCon](https://www.youtube.com/user/CppCon/videos) |
+| **C++ Concurrency in Action** | Anthony Williams | [YouTube](https://www.youtube.com/results?search_query=c%2B%2B+concurrency+in+action) |
+| **Lock-Free Data Structures** | Herlihy/Shavit lecture | [YouTube](https://www.youtube.com/results?search_query=lock-free+data+structures+lecture) |
+
+### Tools
+
+| Tool | Purpose | Link |
+|------|---------|------|
+| **ThreadSanitizer (TSan)** | Data race detection | [clang.llvm.org/docs/ThreadSanitizer.html](https://clang.llvm.org/docs/ThreadSanitizer.html) |
+| **Valgrind (Helgrind)** | Thread error detection | [valgrind.org](https://valgrind.org/) |
+| **Google Test** | C++ testing framework | [google.github.io/googletest](https://google.github.io/googletest/) |
+
+---
+
+*Document created for AzerothCore multi-threading architecture planning.*
+*This document captures architectural decisions and scope definitions for incremental migration to multi-threaded game logic.*
