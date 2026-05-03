@@ -140,7 +140,7 @@ function comp_compile() {
 
       # set all aplications SUID bit
       echo "Setting permissions on binary files"
-      find "$AC_BINPATH_FULL"  -mindepth 1 -maxdepth 1 -type f -exec sudo chown root:root -- {} +
+      find "$AC_BINPATH_FULL"  -mindepth 1 -maxdepth 1 -type f -exec sudo chown azeroth:azeroth -- {} +
       find "$AC_BINPATH_FULL"  -mindepth 1 -maxdepth 1 -type f -exec sudo chmod u+s  -- {} +
 
       if [[ -n "$DOCKER" ]]; then
