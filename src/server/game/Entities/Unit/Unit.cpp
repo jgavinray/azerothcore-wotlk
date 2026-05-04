@@ -21309,7 +21309,7 @@ std::string Unit::GetDebugInfo() const
     return sstr.str();
 }
 
-void Unit::SetCannotReachTargetUnit(bool cannotReach, bool isChase)
+void Unit::SetCannotReachTargetUnit(bool cannotReach, bool /*isChase*/)
 {
     if (cannotReach == m_cannotReachTarget)
     {
