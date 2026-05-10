@@ -124,7 +124,14 @@ BoundaryIntersectBoundary::~BoundaryIntersectBoundary()
     delete _b2;
 }
 
+static int recursion_depth = 0;
+
 bool BoundaryIntersectBoundary::IsWithinBoundaryArea(Position const* pos) const
 {
-    return (_b1->IsWithinBoundary(pos) && _b2->IsWithinBoundary(pos));
+    if (++recursion_depth > 1000) {
+        return false;  // safety valve
+    }
+    bool result = (_b1->IsWithinBoundary(pos) && _b2->IsWithinBoundary(pos));
+    --recursion_depth;
+    return result;
 }

@@ -71,6 +71,27 @@ MapUpdater::MapUpdater(): pending_requests(0)
 {
 }
 
+MapUpdater::~MapUpdater()
+{
+    std::cout << "~MapUpdater: _joined=" << _joined << " threads=" << _workerThreads.size() << std::flush;
+    if (!_joined)
+    {
+        for (auto& thread : _workerThreads)
+        {
+            if (thread.joinable())
+                thread.join();
+        }
+    }
+    else
+    {
+        for (auto& thread : _workerThreads)
+        {
+            if (thread.joinable())
+                thread.detach();
+        }
+    }
+}
+
 void MapUpdater::activate(std::size_t num_threads)
 {
     _workerThreads.reserve(num_threads);
@@ -88,6 +109,8 @@ void MapUpdater::deactivate()
 
     _queue.Cancel();
 
+    _joined = true;
+
     for (auto& thread : _workerThreads)
     {
         if (thread.joinable())
@@ -95,6 +118,7 @@ void MapUpdater::deactivate()
             thread.join();
         }
     }
+    std::cout << "deactivate done, _joined=" << _joined << std::endl;
 }
 
 void MapUpdater::wait()

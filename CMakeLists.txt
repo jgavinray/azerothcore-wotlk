@@ -61,6 +61,21 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/conf/config.cmake")
     include(conf/config.cmake)
 endif()
 
+# Sanitizer flags - rebuilds entire project when enabled
+if(WITH_TSAN)
+    message(STATUS "ThreadSanitizer enabled - rebuilding entire project")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+endif()
+
+if(WITH_ASAN)
+    message(STATUS "AddressSanitizer enabled - rebuilding entire project")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+endif()
+
 #
 # Loading dyn modules
 #
@@ -155,10 +170,6 @@ if (BUILD_TESTING AND BUILD_APPLICATION_WORLDSERVER)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${UNIT_TEST_CXX_FLAGS}")
 
     include(src/cmake/googletest.cmake)
-    fetch_googletest(
-            ${PROJECT_SOURCE_DIR}/src/cmake
-            ${PROJECT_BINARY_DIR}/googletest
-    )
 
     enable_testing()
     add_subdirectory(src/test)

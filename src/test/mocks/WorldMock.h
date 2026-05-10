@@ -117,6 +117,8 @@ public:
     MOCK_METHOD(void, SetRealmName, (std::string name), ());
     MOCK_METHOD(void, RemoveOldCorpses, ());
     MOCK_METHOD(void, DoForAllOnlinePlayers, (std::function<void(Player*)> exec));
+    MOCK_METHOD(char const*, GetPlayerbotsDBRevision, (), (const));
+    MOCK_METHOD(SQLQueryHolderCallback&, AddQueryHolderCallback, (SQLQueryHolderCallback&& callback));
 };
 #pragma GCC diagnostic pop
 

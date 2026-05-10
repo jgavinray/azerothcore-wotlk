@@ -94,7 +94,7 @@ foreach(TOOL_BUILD_NAME ${TOOLS_BUILD_LIST})
   set_property(CACHE ${TOOL_BUILD_VARIABLE} PROPERTY STRINGS default enabled disabled)
 endforeach()
 
-option(BUILD_TESTING       "Build unit tests"                                            0)
+option(BUILD_TESTING       "Build unit tests"                                            1)
 option(USE_SCRIPTPCH       "Use precompiled headers when compiling scripts"              1)
 option(USE_COREPCH         "Use precompiled headers when compiling servers"              1)
 option(WITH_WARNINGS       "Show all warnings during compile"                            0)
@@ -106,6 +106,8 @@ option(WITH_DYNAMIC_LINKING "Enable dynamic library linking."                   
 option(WITH_STRICT_DATABASE_TYPE_CHECKS "Enable strict checking of database field value accessors" 0)
 option(WITHOUT_METRICS     "Disable metrics reporting (i.e. InfluxDB and Grafana)"       0)
 option(WITH_DETAILED_METRICS  "Enable detailed metrics reporting (i.e. time each session takes to update)" 0)
+option(WITH_TSAN              "Compile entire project with ThreadSanitizer (clang/gcc)"                  0)
+option(WITH_ASAN              "Compile entire project with AddressSanitizer (clang/gcc)"               0)
 
 CheckApplicationsBuildList()
 CheckToolsBuildList()

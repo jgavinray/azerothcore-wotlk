@@ -1,0 +1,57 @@
+# ThreadSanitizer and AddressSanitizer builds
+# Rebuilds the entire project with sanitizers for thread-safety and memory validation
+
+name: sanitizer-build
+
+on:
+  push:
+    branches: [ "Playerbot" ]
+  pull_request:
+    branches: [ "Playerbot" ]
+
+jobs:
+  tsan:
+    name: ThreadSanitizer (clang-14)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout AzerothCore
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make clang-14 g++-14 libmysqlclient-dev \
+            libssl-dev libbz2-dev libreadline-dev libncurses-dev mysql-server \
+            libboost-all-dev
+
+      - name: Configure with TSan
+        run: cmake -B build-tsan -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_BUILD_TYPE=Debug -DWITH_TSAN=ON -DBUILD_TESTING=ON
+
+      - name: Build (full rebuild with TSan)
+        run: cmake --build build-tsan -- -j$(nproc)
+
+      - name: Run Tests
+        run: ctest --test-dir build-tsan --build-config Debug --output-on-failure
+
+  asan:
+    name: AddressSanitizer (clang-14)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout AzerothCore
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make clang-14 g++-14 libmysqlclient-dev \
+            libssl-dev libbz2-dev libreadline-dev libncurses-dev mysql-server \
+            libboost-all-dev
+
+      - name: Configure with ASan
+        run: cmake -B build-asan -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_BUILD_TYPE=Debug -DWITH_ASAN=ON -DBUILD_TESTING=ON
+
+      - name: Build (full rebuild with ASan)
+        run: cmake --build build-asan -- -j$(nproc)
+
+      - name: Run Tests
+        run: ctest --test-dir build-asan --build-config Debug --output-on-failure

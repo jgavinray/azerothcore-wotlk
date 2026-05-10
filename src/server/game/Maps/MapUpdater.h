@@ -31,7 +31,7 @@ class MapUpdater
 {
 public:
     MapUpdater();
-    ~MapUpdater() = default;
+    ~MapUpdater();
 
     void schedule_update(Map& map, uint32 diff, uint32 s_diff);
     void schedule_lfg_update(uint32 diff);
@@ -52,6 +52,8 @@ private:
     std::mutex _lock;
     std::condition_variable _condition;
     std::size_t pending_requests;
+    bool _active = false;
+    bool _joined = false;
 };
 
 #endif //_MAP_UPDATER_H_INCLUDED

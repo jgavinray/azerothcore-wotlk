@@ -33,6 +33,8 @@ private:
 public:
     ProducerConsumerQueue() : _shutdown(false) { }
 
+    bool IsShutdown() const { return _shutdown; }
+
     void Push(const T& value)
     {
         std::lock_guard<std::mutex> lock(_queueLock);

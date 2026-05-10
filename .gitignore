@@ -3,6 +3,7 @@
 #
 
 /conf/*
+src/test/server/Testing/Temporary/
 !/conf/dist
 /modules/*
 !/modules/*.md

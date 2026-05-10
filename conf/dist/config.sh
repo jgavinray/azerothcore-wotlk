@@ -74,7 +74,7 @@ CSCRIPTS=${CSCRIPTS:-static}
 CMODULES=${CMODULES:-static}
 
 # compile unit tests
-CBUILD_TESTING=OFF
+CBUILD_TESTING=ON
 
 # use precompiled headers ( fatest compilation but not optimized if you change headers often )
 CSCRIPTPCH=${CSCRIPTPCH:-ON}
