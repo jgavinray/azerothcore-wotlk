@@ -22,6 +22,7 @@
 #include "Common.h"
 #include "Duration.h"
 #include "Opcodes.h"
+#include <iterator>
 
 class WorldPacket : public ByteBuffer
 {
@@ -77,6 +78,20 @@ public:
     void SetOpcode(uint16 opcode) { m_opcode = opcode; }
 
     [[nodiscard]] TimePoint GetReceivedTime() const { return m_receivedTime; }
+
+    using reverse_iterator = std::reverse_iterator<std::vector<uint8>::iterator>;
+    using const_reverse_iterator = std::reverse_iterator<std::vector<uint8>::const_iterator>;
+
+    [[nodiscard]] reverse_iterator rbegin() { return std::make_reverse_iterator(_storage.begin()); }
+    [[nodiscard]] reverse_iterator rend() { return std::make_reverse_iterator(_storage.end()); }
+    [[nodiscard]] const_reverse_iterator rbegin() const { return std::make_reverse_iterator(_storage.cbegin()); }
+    [[nodiscard]] const_reverse_iterator rend() const { return std::make_reverse_iterator(_storage.cend()); }
+
+    template<typename T>
+    void write(T value)
+    {
+        append<T>(value);
+    }
 
 protected:
     uint16 m_opcode{NULL_OPCODE};

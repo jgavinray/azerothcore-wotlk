@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include <cstring>
+#include <initializer_list>
 #include <vector>
 
 class MessageBuffer
@@ -61,9 +62,16 @@ public:
     void ReadCompleted(size_type bytes) { _rpos += bytes; }
     void WriteCompleted(size_type bytes) { _wpos += bytes; }
 
+    [[nodiscard]] bool empty() const { return _storage.empty(); }
+    [[nodiscard]] size_type size() const { return _storage.size(); }
     [[nodiscard]] size_type GetActiveSize() const { return _wpos - _rpos; }
     [[nodiscard]] size_type GetRemainingSpace() const { return _storage.size() - _wpos; }
     [[nodiscard]] size_type GetBufferSize() const { return _storage.size(); }
+
+    uint8& operator[](size_type index) { return _storage[index]; }
+    uint8 const& operator[](size_type index) const { return _storage[index]; }
+
+    void resize(std::size_t bytes) { _storage.resize(bytes); }
 
     // Discards inactive data
     void Normalize()
@@ -99,6 +107,14 @@ public:
         }
     }
 
+    template<typename Iterator>
+    void assign(Iterator begin, Iterator end)
+   {
+        _storage.assign(begin, end);
+        _wpos = _storage.size();
+        _rpos = 0;
+    }
+
     std::vector<uint8>&& Move()
     {
         _wpos = 0;
@@ -128,6 +144,22 @@ public:
             _storage = right.Move();
         }
 
+        return *this;
+    }
+
+    MessageBuffer& operator=(std::initializer_list<uint8> list)
+    {
+        _wpos = 0;
+        _rpos = 0;
+        _storage = std::vector<uint8>(list);
+        return *this;
+    }
+
+    MessageBuffer& operator=(std::vector<uint8> const& vec)
+    {
+        _wpos = 0;
+        _rpos = 0;
+        _storage = vec;
         return *this;
     }
 
