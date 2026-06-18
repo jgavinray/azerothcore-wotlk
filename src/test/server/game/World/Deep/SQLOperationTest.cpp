@@ -182,7 +182,7 @@ TEST(SQLOperation, ConcurrentWorkers)
 
         for (int w = 0; w < NUM_WORKERS; ++w)
         {
-            workers.emplace_back([&completed]() {
+            workers.emplace_back([&completed, NUM_OPS, NUM_WORKERS]() {
                 struct TestOp : SQLOperation
                 {
                     bool Execute() override

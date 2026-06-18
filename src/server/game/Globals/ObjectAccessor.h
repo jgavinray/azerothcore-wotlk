@@ -21,6 +21,8 @@
 #include "Define.h"
 #include "GridDefines.h"
 #include "Object.h"
+#include "ObjectMgr.h"
+#include "Player.h"
 #include "UpdateData.h"
 #include <mutex>
 #include <set>
@@ -60,6 +62,17 @@ public:
 
     static std::shared_mutex* GetLock();
 };
+
+namespace PlayerNameMapHolder
+{
+    void Insert(Player* p);
+
+    void Remove(Player* p);
+
+    void RemoveByName(std::string const& name);
+
+    Player* Find(std::string const& name);
+}
 
 namespace ObjectAccessor
 {

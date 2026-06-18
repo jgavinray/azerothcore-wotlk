@@ -85,21 +85,25 @@ template class HashMapHolder<MotionTransport>;
 
 namespace PlayerNameMapHolder
 {
+    static std::mutex _mutex;
     typedef std::unordered_map<std::string, Player*> MapType;
     static MapType PlayerNameMap;
 
     void Insert(Player* p)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         PlayerNameMap[p->GetName()] = p;
     }
 
     void Remove(Player* p)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         PlayerNameMap.erase(p->GetName());
     }
 
     void RemoveByName(std::string const& name)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         PlayerNameMap.erase(name);
     }
 
@@ -109,11 +113,11 @@ namespace PlayerNameMapHolder
         if (!normalizePlayerName(charName))
             return nullptr;
 
+        std::lock_guard<std::mutex> lock(_mutex);
         auto itr = PlayerNameMap.find(charName);
         return (itr != PlayerNameMap.end()) ? itr->second : nullptr;
     }
-
-} // namespace PlayerNameMapHolder
+}
 
 WorldObject* ObjectAccessor::GetWorldObject(WorldObject const& p, ObjectGuid const guid)
 {
