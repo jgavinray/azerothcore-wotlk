@@ -1,0 +1,10 @@
+[2024-01-15 10:00:01] WorldSession::GetAccountType: Account created
+[2024-01-15 10:00:02] Config: AiPlayerbot.AsyncPathCompute=1
+[2024-01-15 10:00:03] Config: AiPlayerbot.AsyncPathComputePercent=100
+[2024-01-15 10:00:04] Config: AiPlayerbot.ParallelVerify=1
+[2024-01-15 10:00:05] PlayerbotMgr: 500 bots loaded
+[2024-01-15 10:00:06] Map::Update: Starting map tick
+[2024-01-15 10:00:07] BotComputePool: Activated 4 workers
+[2024-01-15 10:20:01] playerbots-perf map=692 bot_ai_ms=850 path_ms=120 value_ms=340
+[2024-01-15 10:20:02] PerformanceMonitor: Trigger count=12450
+[2024-01-15 10:25:01] Map::Update: Tick complete, no errors detected

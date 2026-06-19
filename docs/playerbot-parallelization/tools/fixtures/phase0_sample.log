@@ -1,0 +1,5 @@
+playerbots-perf map=692 bot_ai_ms=850 path_ms=120 value_ms=340
+playerbots-perf map=692 bot_ai_ms=920 path_ms=130 value_ms=360
+playerbots-perf map=477 bot_ai_ms=410 path_ms=60 value_ms=180
+playerbots-perf map=477 bot_ai_ms=390 path_ms=55 value_ms=170
+playerbots-perf map=692 bot_ai_ms=880 path_ms=125 value_ms=350

@@ -1,9 +1,21 @@
-# Playerbot Load-Spreading Spec — MOVED
+# Playerbot Compute Offload Spec
 
-This spec has been expanded into a full, ordered suite under:
+The current implementation spec lives under:
 
-**`docs/playerbot-parallelization/`**
+`docs/playerbot-parallelization/`
 
-Start at `docs/playerbot-parallelization/README.md` (global rules, capability map, regen prompt),
-then follow `phase-0-measurement.md` → `phase-1-async-pathfinding.md` →
-`phase-2-parallel-values.md` → `phase-3-deferred.md`.
+Start with:
+
+1. `docs/playerbot-parallelization/START-HERE.md`
+2. `docs/playerbot-parallelization/execution-contract.md`
+3. `docs/playerbot-parallelization/README.md`
+4. current phase file
+
+Important:
+
+- Do not use the old async `PathGenerator` owner-free plan.
+- Do not worker-read MMAP/Detour data until the MMAP read-safety gate is resolved.
+- Do not begin implementation until the Phase -1 static-analysis documents say `Decision: PROCEED`.
+- Do not add a map-start generic value prepass.
+- Do not move playerbot action execution off the map thread.
+- All implementation must preserve current game-loop ordering and atomic map-thread mutations.

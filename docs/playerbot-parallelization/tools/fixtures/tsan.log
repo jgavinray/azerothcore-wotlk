@@ -1,0 +1,10 @@
+[2024-01-15 10:00:01] WorldSession::GetAccountType: Account created
+[2024-01-15 10:00:02] Config: AiPlayerbot.AsyncPathCompute=1
+[2024-01-15 10:00:03] Config: AiPlayerbot.BotComputeThreads=4
+[2024-01-15 10:00:04] PlayerbotMgr: 500 bots loaded
+[2024-01-15 10:00:05] BotComputePool: Activated 4 workers
+WARNING: ThreadSanitizer: data race on map=692 in PathComputeJob::Run
+[2024-01-15 10:10:01] playerbots-perf map=692 bot_ai_ms=950 path_ms=140 value_ms=360
+[2024-01-15 10:15:01] PerformanceMonitor: Trigger count=10500
+[2024-01-15 10:20:01] Map::Update: Tick complete
+[2024-01-15 10:25:01] ThreadSanitizer: 1 warning detected

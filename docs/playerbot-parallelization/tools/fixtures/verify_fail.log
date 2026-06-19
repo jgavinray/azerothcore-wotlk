@@ -1,0 +1,10 @@
+[2024-01-15 10:00:01] WorldSession::GetAccountType: Account created
+[2024-01-15 10:00:02] Config: AiPlayerbot.AsyncPathCompute=1
+[2024-01-15 10:00:03] Config: AiPlayerbot.ParallelVerify=1
+[2024-01-15 10:00:04] PlayerbotMgr: 500 bots loaded
+[2024-01-15 10:00:05] BotComputePool: Activated 4 workers
+[2024-01-15 10:15:01] playerbots-perf map=692 bot_ai_ms=900 path_ms=130 value_ms=350
+[2024-01-15 10:16:02] PARALLEL_VERIFY_FAIL path=MoveToLOS start=(10,20,30) dest=(40,50,60)
+[2024-01-15 10:16:03] Old path type=3 points=5, New path type=2 points=4
+[2024-01-15 10:20:01] PerformanceMonitor: Trigger count=11200
+[2024-01-15 10:25:01] Map::Update: Tick complete
